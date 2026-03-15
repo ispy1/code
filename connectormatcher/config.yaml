@@ -1,0 +1,21 @@
+server:
+  port: 8080
+  refresh_interval_hours: 4
+
+kafka:
+  brokers:
+    - "localhost:9092"
+
+connect:
+  url: "https://localhost:8083"
+  tls:
+    cert_file: "/etc/secrets/kafka-connect/client.crt"
+    key_file: "/etc/secrets/kafka-connect/client.key"
+    ca_file: "/etc/secrets/kafka-connect/ca.crt"
+
+schema_registry:
+  url: "https://localhost:8081"
+  tls:
+    ca_file: "/etc/secrets/schema-registry/ca.crt"
+  api_key: "YOUR_SR_API_KEY"
+  api_secret: "YOUR_SR_API_SECRET"
