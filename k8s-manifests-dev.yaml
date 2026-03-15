@@ -1,0 +1,144 @@
+#
+# Development manifest for single-node clusters.
+# This file is configured with 1 replica and no pod anti-affinity.
+#
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spot-injector-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spot-injector-sa
+  namespace: spot-injector-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spot-injector-role
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spot-injector-rb
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: spot-injector-role
+subjects:
+- kind: ServiceAccount
+  name: spot-injector-sa
+  namespace: spot-injector-system
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: spot-injector-selfsigned-issuer
+  namespace: spot-injector-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: spot-injector-tls
+  namespace: spot-injector-system
+spec:
+  secretName: spot-injector-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS1
+    size: 2048
+  dnsNames:
+  - spot-injector-svc.spot-injector-system.svc
+  - spot-injector-svc.spot-injector-system.svc.cluster.local
+  issuerRef:
+    name: spot-injector-selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spot-injector
+  namespace: spot-injector-system
+  labels:
+    app: spot-injector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spot-injector
+  template:
+    metadata:
+      labels:
+        app: spot-injector
+    spec:
+      serviceAccountName: spot-injector-sa
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.azure.com/scalesetpriority
+                operator: NotIn
+                values:
+                - spot
+      containers:
+      - name: webhook
+        image: your-repo/spot-injector:latest # IMPORTANT: Change this to your image repository
+        ports:
+        - containerPort: 8443
+          name: webhook-server
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: spot-injector-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spot-injector-svc
+  namespace: spot-injector-system
+spec:
+  ports:
+  - port: 443
+    targetPort: webhook-server
+  selector:
+    app: spot-injector
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: spot-injector-webhook
+  annotations:
+    cert-manager.io/inject-ca-from: "spot-injector-system/spot-injector-tls"
+spec:
+  failurePolicy: Ignore
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    operations: ["CREATE"]
+    resources: ["pods"]
+    scope: "*"
+  clientConfig:
+    service:
+      name: spot-injector-svc
+      namespace: spot-injector-system
+      path: "/mutate"
+  sideEffects: None
+  admissionReviewVersions: ["v1", "v1beta1"]
+  namespaceSelector:
+    matchExpressions:
+    - key: "kubernetes.io/metadata.name"
+      operator: "NotIn"
+      values: ["kube-system", "cert-manager", "gatekeeper-system"]
